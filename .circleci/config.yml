@@ -37,14 +37,14 @@ jobs:
       - run:
           name: "Clone Centauri"
           command: |
-            git clone -b << pipeline.parameters.version >> https://github.com/notional-labs/composable-centauri
+            git clone -b << pipeline.parameters.version >> https://github.com/ComposableFi/composable-cosmos.git
       - restore_cache:
           keys:
-            - 'go-{{ checksum "composable-centauri/go.sum" }}'
+            - 'go-{{ checksum "composable-cosmos/go.sum" }}'
       - run:
           name: "Build Centauri binary"
           command: |
-            cd composable-centauri
+            cd composable-cosmos
 
             # Grab static libwasmvm
             wasmvm_version="$(go list -m all | grep -F "github.com/CosmWasm/wasmvm" | awk '{print $2}')"
@@ -57,11 +57,11 @@ jobs:
             ldd ./bin/centaurid || :
             ./bin/centaurid version --long
       - save_cache:
-          key: 'go-{{ checksum "composable-centauri/go.sum" }}'
+          key: 'go-{{ checksum "composable-cosmos/go.sum" }}'
           paths:
             - "~/go"
       - persist_to_workspace:
-          root: "./composable-centauri/bin"
+          root: "./composable-cosmos/bin"
           paths:
             - "centaurid"
   publish:
@@ -80,6 +80,6 @@ jobs:
           command: |
             ghr -t "${GITHUB_TOKEN}" \
               -n "<< pipeline.parameters.version >>" \
-              -b "For changes, see here: https://github.com/notional-labs/composable-centauri/releases/tag/<< pipeline.parameters.version >>" \
+              -b "For changes, see here: https://github.com/ComposableFi/composable-cosmos/releases/tag/<< pipeline.parameters.version >>" \
               -recreate "<< pipeline.parameters.version >>" \
               /tmp/binaries/centaurid
