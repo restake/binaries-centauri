@@ -1,0 +1,115 @@
+---
+name: "Build Centauri release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Specify the version"
+        required: true
+        default: "v6.3.1"
+  pull_request:
+    branches:
+      - "master"
+
+permissions:
+  contents: "write"
+
+env:
+  CENTAURI_VERSION: "${{ inputs.version || 'v6.3.1' }}"
+
+jobs:
+  build:
+    name: "Build"
+    runs-on: "ubuntu-latest-l"
+    steps:
+      - id: "setup-go"
+        name: "Setup Go"
+        uses: "actions/setup-go@v5"
+        with:
+          go-version: "1.21"
+
+      - id: "setup-dependencies"
+        name: "Install required system packages"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential curl git musl-dev
+
+      - id: "clone-pipeline"
+        name: "Clone pipeline"
+        uses: "actions/checkout@v4"
+        with:
+          path: "pipeline"
+
+      - id: "clone"
+        name: "Clone Centauri source"
+        uses: "actions/checkout@v4"
+        with:
+          repository: "ComposableFi/composable-cosmos"
+          fetch-tags: true
+          path: "centauri"
+          ref: "refs/tags/${{ env.CENTAURI_VERSION }}"
+          submodules: true
+
+      - id: "apply-patches"
+        name: "Apply patches"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          cd "${GITHUB_WORKSPACE}/centauri"
+          git am --3way "${GITHUB_WORKSPACE}/pipeline/patches"/*.patch
+
+      - id: "build"
+        name: "Build centaurid binary"
+        run: |
+          set -euo pipefail
+
+          cd centauri
+
+          # Grab static libwasmvm
+          wasmvm_version="$(go list -m all | grep -F "github.com/CosmWasm/wasmvm" | awk '{print $2}')"
+          curl -JLO "https://github.com/CosmWasm/wasmvm/releases/download/${wasmvm_version}/libwasmvm_muslc.x86_64.a"
+          ln -s libwasmvm_muslc.x86_64.a libwasmvm.x86_64.a
+
+          make CC="x86_64-linux-musl-gcc" CGO_LDFLAGS="-L." LEDGER_ENABLED=false LINK_STATICALLY=true build
+
+          # Smoke test
+          ldd ./bin/centaurid || :
+          ./bin/centaurid version --long
+
+      - id: "upload-artifact"
+        name: "Save binary to workspace"
+        uses: "actions/upload-artifact@v3"
+        with:
+          name: "centauri"
+          path: "centauri/bin/centaurid"
+          if-no-files-found: "error"
+          retention-days: 1
+
+  publish:
+    name: "Publish"
+    needs: "build"
+    runs-on: "ubuntu-latest"
+    if: "${{ github.event_name == 'workflow_dispatch' }}"
+    steps:
+      - id: "download-artifact"
+        name: "Download binary from workspace"
+        uses: "actions/download-artifact@v3"
+        with:
+          name: "centauri"
+          path: "binaries"
+
+      - id: "publish"
+        name: "Publish Github release"
+        uses: "softprops/action-gh-release@v1"
+        with:
+          body: |
+            For changes, see here: https://github.com/ComposableFi/composable-cosmos/releases/tag/${{ env.CENTAURI_VERSION }}
+          files: |
+            binaries/centaurid
+          tag_name: "${{ env.CENTAURI_VERSION }}"
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: true
